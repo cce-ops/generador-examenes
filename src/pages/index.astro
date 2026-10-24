@@ -379,9 +379,16 @@ function appendMedia(parent: HTMLElement, obj: any) {
   if (obj.svg && typeof obj.svg === "string") {
     const wrap = document.createElement("div");
     wrap.style.margin = "8px 0";
-    wrap.innerHTML = obj.svg;
-    // sanitize: remove scripts
-    wrap.querySelectorAll("script").forEach((s) => s.remove());
+    // Sanitización básica: parsear y eliminar scripts, handlers on* y javascript: URLs
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(obj.svg, "image/svg+xml");
+    doc.querySelectorAll("script, foreignObject").forEach((n) => n.remove());
+    doc.querySelectorAll("*").forEach((el) => {
+      for (const attr of Array.from(el.attributes)) {
+        if (/^on/i.test(attr.name) || /javascript:/i.test(attr.value)) el.removeAttribute(attr.name);
+      }
+    });
+    wrap.appendChild(document.importNode(doc.documentElement, true));
     parent.appendChild(wrap);
   }
   if (typeof obj.imageIndex === "number" && extractedImages[obj.imageIndex]) {

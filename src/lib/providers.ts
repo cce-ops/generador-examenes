@@ -47,7 +47,10 @@ export async function callLLM(opts: LLMCallOpts): Promise<any> {
     if (apiKey) headers["x-goog-api-key"] = apiKey;
     const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal: controller.signal });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(json?.error?.message || `HTTP ${res.status}`);
+    if (!res.ok) {
+      const msg = (json?.error?.message || `HTTP ${res.status}`).replace(apiKey, "[REDACTED]");
+      throw new Error(msg);
+    }
     const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!text) throw new Error("Sin respuesta del modelo.");
     return parseJsonLoose(text, jsonMode);

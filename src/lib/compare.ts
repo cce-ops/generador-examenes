@@ -112,14 +112,13 @@ export function compareAnswer(answer: AnswerSpec, raw: string): CompareResult {
 function safeEval(expr: string, vars: Record<string, number>): number | null {
   try {
     let e = expr.trim();
+    // Lista blanca de caracteres permitidos para evitar inyección de código.
+    if (!/^[0-9a-zA-Z_+\-*/().,\s^]+$/.test(e)) return null;
     // normalize caret
     e = e.replace(/\^/g, "**");
-    // replace implicit? no
     const keys = Object.keys(vars);
-    const args = keys.join(",");
-    const vals = keys.map((k) => vars[k]);
     const fn = new Function(...keys, `"use strict"; return (${e});`);
-    const r = fn(...vals);
+    const r = fn(...Object.values(vars));
     if (typeof r !== "number" || !isFinite(r)) return null;
     return r;
   } catch {

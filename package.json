@@ -10,7 +10,7 @@
     "check": "astro check"
   },
   "dependencies": {
-    "astro": "^5.18.0",
+    "astro": "^7.3.8",
     "zod": "^3.23.0"
   },
   "devDependencies": {
