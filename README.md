@@ -27,7 +27,7 @@ npm run build
 ## Funcionalidades
 
 - Subida de apuntes (PDF, DOCX, MD, TXT) con extracción en el navegador.
-- Generación de examen con LLM (Gemini, OpenRouter, Groq, OpenAI, Mistral, Ollama, LM Studio).
+- Generación de examen con LLM (Gemini).
 - Corrección determinista de test y problemas (numérico, vector, matriz, simbólico, texto).
 - Corrección con LLM de preguntas abiertas mediante rúbrica.
 - Nota total, por pregunta/subapartado, feedback y resolución.
