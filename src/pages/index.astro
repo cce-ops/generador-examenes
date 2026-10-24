@@ -33,11 +33,10 @@ import Layout from "../layouts/Layout.astro";
           <select id="model"></select>
         </div>
         <div class="col">
-          <label>Almacenamiento de clave:</label>
-          <select id="storagemode">
-            <option value="session">sessionStorage (por defecto)</option>
-            <option value="local">localStorage</option>
-          </select>
+          <label style="display:flex;align-items:center;gap:8px;text-transform:none;letter-spacing:0;font-weight:500;margin-top:28px;">
+            <input type="checkbox" id="remember-key" style="width:auto;">
+            Recordar clave en este dispositivo
+          </label>
         </div>
       </div>
       <label>API key:</label>
@@ -115,31 +114,43 @@ const GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash
 // ---- UI ----
 const modelSel = $("model") as HTMLSelectElement;
 const apikeyInput = $("apikey") as HTMLInputElement;
-const storageSel = $("storagemode") as HTMLSelectElement;
+const rememberChk = $("remember-key") as HTMLInputElement;
 
 for (const m of GEMINI_MODELS) {
   const o = document.createElement("option");
   o.value = m; o.textContent = m; modelSel.appendChild(o);
 }
 
-// init storage mode
-const initMode = loadStorageMode();
-storageSel.value = initMode;
+function currentMode(): "session" | "local" {
+  return rememberChk.checked ? "local" : "session";
+}
+
+// init: prefer whichever storage has a key
+let initMode: "session" | "local" = "session";
+const sk = loadKey("session");
+const lk = loadKey("local");
+if (lk && !sk) initMode = "local";
+rememberChk.checked = initMode === "local";
 const lm = loadModel(initMode);
 modelSel.value = lm && GEMINI_MODELS.includes(lm) ? lm : GEMINI_MODELS[0];
 apikeyInput.value = loadKey(initMode);
 
-modelSel.addEventListener("change", () => saveModel(storageSel.value as any, modelSel.value));
-storageSel.addEventListener("change", () => {
-  saveStorageMode(storageSel.value as any);
-  const m = storageSel.value as any;
-  const lm2 = loadModel(m);
-  modelSel.value = lm2 && GEMINI_MODELS.includes(lm2) ? lm2 : GEMINI_MODELS[0];
-  apikeyInput.value = loadKey(m);
+modelSel.addEventListener("change", () => saveModel(currentMode(), modelSel.value));
+rememberChk.addEventListener("change", () => {
+  const mode = currentMode();
+  saveStorageMode(mode);
+  // migrate key/model
+  const key = loadKey(mode === "local" ? "session" : "local");
+  const model = loadModel(mode === "local" ? "session" : "local");
+  if (key) saveKey(mode, key);
+  if (model) saveModel(mode, model);
+  apikeyInput.value = loadKey(mode);
+  const lm2 = loadModel(mode);
+  modelSel.value = lm2 && GEMINI_MODELS.includes(lm2) ? lm2 : modelSel.value;
 });
-apikeyInput.addEventListener("change", () => saveKey(storageSel.value as any, apikeyInput.value));
+apikeyInput.addEventListener("change", () => saveKey(currentMode(), apikeyInput.value));
 $("btn-key-del").addEventListener("click", () => {
-  clearKey(storageSel.value as any);
+  clearKey(currentMode());
   apikeyInput.value = "";
 });
 
@@ -245,7 +256,6 @@ $("btn-demo").addEventListener("click", () => {
 $("btn-generate").addEventListener("click", async () => {
   const notes = ($("notes") as HTMLTextAreaElement).value.trim();
   if (!notes) { $("gen-status").textContent = "Pega o sube apuntes primero."; return; }
-  const mode = storageSel.value as any;
   const model = modelSel.value.trim();
   const apiKey = apikeyInput.value.trim();
   if (!apiKey) { $("gen-status").textContent = "Falta API key."; return; }
@@ -485,7 +495,6 @@ function createAnswerInput(answer: any, value: string, onChange: (v: string) => 
 // ---- Submit ----
 $("btn-submit").addEventListener("click", async () => {
   if (!currentExam) return;
-  const mode = storageSel.value as any;
   const model = modelSel.value.trim();
   const apiKey = apikeyInput.value.trim();
   const llm = apiKey ? { apiKey, model } : null;
@@ -526,7 +535,7 @@ function renderResults(res: any) {
       const proc = (block.querySelector("textarea") as HTMLTextAreaElement).value.trim();
       if (!proc) { (block.querySelector(".analyze-out") as HTMLElement).textContent = "Escribe tu desarrollo."; return; }
       const item = res.items.find((x: any) => x.id === id);
-      const mode = storageSel.value as any;
+    
       const model = modelSel.value.trim();
       const apiKey = apikeyInput.value.trim();
       if (!apiKey) { (block.querySelector(".analyze-out") as HTMLElement).textContent = "Falta API key."; return; }
