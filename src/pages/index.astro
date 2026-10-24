@@ -1,0 +1,561 @@
+---
+import Layout from "../layouts/Layout.astro";
+---
+<Layout>
+<div class="container">
+  <header class="hero">
+    <div>
+      <h1>Generador y corrector de <span class="accent">exámenes</span></h1>
+      <p class="subtitle">Convierte tus apuntes en un examen y corrígelo automáticamente. Todo en el navegador, BYOK con Google Gemini.</p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <button id="btn-theme" class="secondary" type="button">Modo claro</button>
+      <div class="badge">BYOK · Gemini</div>
+    </div>
+  </header>
+
+  <!-- SETUP -->
+  <section id="view-setup">
+    <div class="card">
+      <h2>1. Apuntes</h2>
+      <label>Texto / apuntes:</label>
+      <textarea id="notes" rows="8" placeholder="Pega aquí el texto de los apuntes..."></textarea>
+      <p>O sube uno o varios ficheros (tienen prioridad):</p>
+      <label>Ficheros (.md, .txt, .docx, .pdf): <input type="file" id="f-files" multiple accept=".md,.markdown,.txt,.docx,.pdf"></label>
+      <div id="extract-status" class="status">Sin fichero.</div>
+    </div>
+
+    <div class="card">
+      <h2>2. Clave de IA (BYOK)</h2>
+      <div class="row">
+        <div class="col">
+          <label>Modelo Gemini:</label>
+          <select id="model"></select>
+        </div>
+        <div class="col">
+          <label>Almacenamiento de clave:</label>
+          <select id="storagemode">
+            <option value="session">sessionStorage (por defecto)</option>
+            <option value="local">localStorage</option>
+          </select>
+        </div>
+      </div>
+      <label>API key:</label>
+      <input type="password" id="apikey" autocomplete="off" placeholder="Tu clave personal">
+      <button id="btn-key-del" class="danger" type="button">Borrar clave</button>
+      <p class="status">La clave solo viaja al proveedor elegido. Ollama/LM Studio no requieren clave.</p>
+    </div>
+
+    <div class="card">
+      <h2>3. Generar examen</h2>
+      <label>Tipos de ejercicio a incluir:</label>
+      <div class="row" style="gap:10px;">
+        <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-weight:500;"><input type="checkbox" id="t-test" checked style="width:auto;"> Tipo Test</label>
+        <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-weight:500;"><input type="checkbox" id="t-tf" checked style="width:auto;"> Verdadero o Falso</label>
+        <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-weight:500;"><input type="checkbox" id="t-def" checked style="width:auto;"> Definiciones</label>
+        <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-weight:500;"><input type="checkbox" id="t-short" checked style="width:auto;"> Problemas cortos</label>
+        <label style="display:flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-weight:500;"><input type="checkbox" id="t-long" checked style="width:auto;"> Problemas largos</label>
+      </div>
+      <label>Instrucciones para la IA (opcional):</label>
+      <textarea id="instr" rows="3" placeholder="Ej.: 5 preguntas test, 2 problemas cortos..."></textarea>
+      <div class="row">
+        <button id="btn-generate" type="button">Generar examen</button>
+        <button id="btn-demo" class="secondary" type="button">Probar sin clave (demo)</button>
+      </div>
+      <div id="gen-status" class="status">Listo.</div>
+    </div>
+  </section>
+
+  <!-- EXAM -->
+  <section id="view-exam" class="hidden">
+    <div class="card">
+      <h2 id="exam-title">Examen</h2>
+      <div id="exam-body"></div>
+      <div class="row">
+        <button id="btn-submit" type="button">Corregir</button>
+        <button id="btn-back-setup" class="secondary" type="button">Volver</button>
+      </div>
+      <div id="submit-status" class="status"></div>
+    </div>
+  </section>
+
+  <!-- RESULTS -->
+  <section id="view-results" class="hidden">
+    <div class="card">
+      <h2>Resultados</h2>
+      <div class="score" id="score"></div>
+      <div id="results-body"></div>
+      <div class="row">
+        <button id="btn-new" class="secondary" type="button">Nuevo examen</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>
+import { callLLMWithFallback } from "../lib/providers";
+import { ExamSchema } from "../lib/types";
+import { buildExamPrompt, EXAM_SYSTEM_PROMPT } from "../lib/prompts";
+import { loadStorageMode, saveStorageMode, loadKey, saveKey, clearKey, loadModel, saveModel, saveExam, loadExam, saveAnswers, loadAnswers, clearExam } from "../lib/storage";
+import { gradeExam, computeTotalPoints, analyzeDevelopment, normalizeExam } from "../lib/grading";
+
+import { DEMO_EXAM } from "../lib/demo";
+import type { Exam, StudentAnswers } from "../lib/types";
+
+// ---- DOM helpers ----
+const $ = (id: string) => document.getElementById(id)!;
+
+// ---- State ----
+let currentExam: Exam | null = null;
+let currentAnswers: StudentAnswers = { mc: {}, open: {}, short: {}, long: {} };
+let extractedImages: string[] = [];
+
+const GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
+
+// ---- UI ----
+const modelSel = $("model") as HTMLSelectElement;
+const apikeyInput = $("apikey") as HTMLInputElement;
+const storageSel = $("storagemode") as HTMLSelectElement;
+
+for (const m of GEMINI_MODELS) {
+  const o = document.createElement("option");
+  o.value = m; o.textContent = m; modelSel.appendChild(o);
+}
+
+// init storage mode
+const initMode = loadStorageMode();
+storageSel.value = initMode;
+const lm = loadModel(initMode);
+modelSel.value = lm && GEMINI_MODELS.includes(lm) ? lm : GEMINI_MODELS[0];
+apikeyInput.value = loadKey(initMode);
+
+modelSel.addEventListener("change", () => saveModel(storageSel.value as any, modelSel.value));
+storageSel.addEventListener("change", () => {
+  saveStorageMode(storageSel.value as any);
+  const m = storageSel.value as any;
+  const lm2 = loadModel(m);
+  modelSel.value = lm2 && GEMINI_MODELS.includes(lm2) ? lm2 : GEMINI_MODELS[0];
+  apikeyInput.value = loadKey(m);
+});
+apikeyInput.addEventListener("change", () => saveKey(storageSel.value as any, apikeyInput.value));
+$("btn-key-del").addEventListener("click", () => {
+  clearKey(storageSel.value as any);
+  apikeyInput.value = "";
+});
+
+// ---- Theme toggle ----
+const themeBtn = $("btn-theme") as HTMLButtonElement;
+function applyTheme(mode: string) {
+  if (mode === "light") {
+    document.body.classList.add("light");
+    themeBtn.textContent = "Modo oscuro";
+  } else {
+    document.body.classList.remove("light");
+    themeBtn.textContent = "Modo claro";
+  }
+}
+const savedTheme = localStorage.getItem("ui_theme") || "dark";
+applyTheme(savedTheme);
+themeBtn.addEventListener("click", () => {
+  const next = document.body.classList.contains("light") ? "dark" : "light";
+  localStorage.setItem("ui_theme", next);
+  applyTheme(next);
+});
+
+// ---- Extraction ----
+async function extractPdf(file: File): Promise<string> {
+  const lib = (window as any).pdfjsLib;
+  if (!lib) throw new Error("pdf.js no cargado");
+  const buf = await file.arrayBuffer();
+  const pdf = await lib.getDocument({ data: buf, isEvalSupported: false }).promise;
+  let text = "";
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    text += content.items.map((it: any) => it.str).join(" ") + "\n";
+  }
+  return text;
+}
+async function extractDocx(file: File): Promise<string> {
+  const mammoth = (window as any).mammoth;
+  if (!mammoth) throw new Error("mammoth no cargado");
+  const buf = await file.arrayBuffer();
+  // extraer imágenes
+  let imgCount = 0;
+  try {
+    const htmlRes = await mammoth.convertToHtml({ arrayBuffer: buf });
+    const html = htmlRes.value || "";
+    const matches = html.match(/<img[^>]+src="(data:[^"]+)"[^>]*>/g) || [];
+    for (const m of matches) {
+      const srcMatch = m.match(/src="(data:[^"]+)"/);
+      if (srcMatch) {
+        extractedImages.push(srcMatch[1]);
+        imgCount++;
+      }
+    }
+  } catch {}
+  const res = await mammoth.extractRawText({ arrayBuffer: buf });
+  let text = res.value || "";
+  if (imgCount > 0) {
+    text += "\n\nImágenes extraídas del documento (referenciables por índice 0-based):\n";
+    for (let i = 0; i < imgCount; i++) text += `[IMAGEN ${i}]\n`;
+  }
+  return text;
+}
+async function extractFile(file: File): Promise<string> {
+  if (file.name.toLowerCase().endsWith(".pdf")) return extractPdf(file);
+  if (file.name.toLowerCase().endsWith(".docx")) return extractDocx(file);
+  return await file.text();
+}
+
+const filesInput = $("f-files") as HTMLInputElement;
+filesInput.addEventListener("change", async () => {
+  const files = Array.from(filesInput.files || []);
+  if (!files.length) return;
+  try {
+    extractedImages = [];
+    $("extract-status").textContent = "Extrayendo...";
+    const parts: string[] = [];
+    for (const f of files) {
+      const t = await extractFile(f);
+      parts.push(`===== ${f.name} =====\n${t}`);
+    }
+    const combined = parts.join("\n\n");
+    ($("notes") as HTMLTextAreaElement).value = combined;
+    $("extract-status").textContent = `Extraídos ${files.length} fichero(s) (${combined.length} chars).`;
+  } catch (e: any) {
+    $("extract-status").textContent = `Error: ${e?.message ?? e}`;
+  }
+});
+
+// ---- Generate ----
+function showView(name: string) {
+  for (const v of ["view-setup","view-exam","view-results"]) $(v).classList.toggle("hidden", v !== name);
+}
+
+$("btn-demo").addEventListener("click", () => {
+  currentExam = normalizeExam(DEMO_EXAM);
+  saveExam(currentExam);
+  currentAnswers = { mc: {}, open: {}, short: {}, long: {} };
+  saveAnswers(currentAnswers);
+  renderExam();
+  showView("view-exam");
+});
+
+$("btn-generate").addEventListener("click", async () => {
+  const notes = ($("notes") as HTMLTextAreaElement).value.trim();
+  if (!notes) { $("gen-status").textContent = "Pega o sube apuntes primero."; return; }
+  const mode = storageSel.value as any;
+  const model = modelSel.value.trim();
+  const apiKey = apikeyInput.value.trim();
+  if (!apiKey) { $("gen-status").textContent = "Falta API key."; return; }
+  $("gen-status").textContent = "Generando examen...";
+  try {
+    const selected: string[] = [];
+    if (($("t-test") as HTMLInputElement).checked) selected.push("Tipo Test (opción múltiple)");
+    if (($("t-tf") as HTMLInputElement).checked) selected.push("Verdadero o Falso");
+    if (($("t-def") as HTMLInputElement).checked) selected.push("Definiciones");
+    if (($("t-short") as HTMLInputElement).checked) selected.push("Problemas cortos");
+    if (($("t-long") as HTMLInputElement).checked) selected.push("Problemas largos");
+    const typeInstr = selected.length ? `Incluye únicamente estos tipos de ejercicio: ${selected.join(", ")}.` : "";
+    const freeInstr = ($("instr") as HTMLTextAreaElement).value.trim();
+    const instr = [typeInstr, freeInstr].filter(Boolean).join("\n");
+    const raw = await callLLMWithFallback({
+      apiKey, model,
+      system: EXAM_SYSTEM_PROMPT,
+      user: buildExamPrompt(notes, "apuntes", instr),
+      jsonMode: true,
+      onAttempt: (m) => { $("gen-status").textContent = m; },
+    });
+    const parsed = ExamSchema.safeParse(raw);
+    if (!parsed.success) {
+      console.error(parsed.error);
+      throw new Error("El JSON no cumple el esquema. Reintenta.");
+    }
+    currentExam = normalizeExam(parsed.data);
+    // normalize points
+    if (!currentExam.totalPoints) currentExam.totalPoints = computeTotalPoints(currentExam);
+    saveExam(currentExam);
+    localStorage.setItem("exam_images", JSON.stringify(extractedImages));
+    currentAnswers = { mc: {}, open: {}, short: {}, long: {} };
+    saveAnswers(currentAnswers);
+    $("gen-status").textContent = "Examen generado.";
+    renderExam();
+    showView("view-exam");
+  } catch (e: any) {
+    $("gen-status").textContent = `Error: ${e?.message ?? e}`;
+  }
+});
+
+// ---- Render exam ----
+function renderExam() {
+  if (!currentExam) return;
+  ($("exam-title") as HTMLElement).textContent = `${currentExam.title} — ${currentExam.subject}`;
+  const body = $("exam-body");
+  body.innerHTML = "";
+  let idx = 0;
+  for (const sec of currentExam.sections) {
+    const secDiv = document.createElement("div");
+    secDiv.innerHTML = `<h3>${sectionTitle(sec.type)}</h3>`;
+    body.appendChild(secDiv);
+
+    if (sec.type === "multiple_choice") {
+      for (const q of sec.questions) {
+        const d = document.createElement("div");
+        d.className = "q";
+        d.innerHTML = `<p><strong>${q.id}.</strong> ${escapeHtml(q.statement)} <span class="status">(${q.points ?? 0} pts)</span></p>`;
+        appendMedia(d, q);
+        const opts = document.createElement("div");
+        for (const o of q.options) {
+          const lab = document.createElement("label");
+          lab.className = "mc-option";
+          const r = document.createElement("input");
+          r.type = "radio"; r.name = q.id; r.value = o.id;
+          if (currentAnswers.mc[q.id] === o.id) r.checked = true;
+          r.addEventListener("change", () => { currentAnswers.mc[q.id] = o.id; saveAnswers(currentAnswers); });
+          lab.appendChild(r);
+          const span = document.createElement("span");
+          span.textContent = o.id + ") " + o.text;
+          lab.appendChild(span);
+          opts.appendChild(lab);
+        }
+        d.appendChild(opts);
+        body.appendChild(d);
+      }
+    } else if (sec.type === "open_reasoning") {
+      for (const q of sec.questions) {
+        const d = document.createElement("div");
+        d.className = "q";
+        d.innerHTML = `<p><strong>${q.id}.</strong> ${escapeHtml(q.statement)} <span class="status">(${q.points} pts)</span></p>`;
+        appendMedia(d, q);
+        const ta = document.createElement("textarea");
+        ta.rows = 4;
+        ta.value = currentAnswers.open[q.id] ?? "";
+        ta.addEventListener("input", () => { currentAnswers.open[q.id] = ta.value; saveAnswers(currentAnswers); });
+        d.appendChild(ta);
+        body.appendChild(d);
+      }
+    } else if (sec.type === "short_problem") {
+      for (const p of sec.problems) {
+        const d = document.createElement("div");
+        d.className = "q";
+        d.innerHTML = `<p><strong>${p.id}.</strong> ${escapeHtml(p.statement)} <span class="status">(${p.points} pts)</span></p>`;
+        appendMedia(d, p);
+        const input = createAnswerInput(p.answer, currentAnswers.short[p.id] ?? "", (v) => { currentAnswers.short[p.id] = v; saveAnswers(currentAnswers); });
+        d.appendChild(input);
+        body.appendChild(d);
+      }
+    } else if (sec.type === "long_problem") {
+      for (const prob of sec.problems) {
+        const d = document.createElement("div");
+        d.className = "q";
+        d.innerHTML = `<p><strong>${prob.id}.</strong> ${escapeHtml(prob.statement)}</p>`;
+        appendMedia(d, prob);
+        if (!currentAnswers.long[prob.id]) currentAnswers.long[prob.id] = {};
+        for (const sp of prob.subparts) {
+          const sub = document.createElement("div");
+          sub.style.marginLeft = "12px";
+          sub.innerHTML = `<p><em>${sp.id})</em> ${escapeHtml(sp.statement)} <span class="status">(${sp.points} pts)</span></p>`;
+          appendMedia(sub, sp);
+          const input = createAnswerInput(sp.answer, currentAnswers.long[prob.id][sp.id] ?? "", (v) => { currentAnswers.long[prob.id][sp.id] = v; saveAnswers(currentAnswers); });
+          sub.appendChild(input);
+          // procedure textarea for optional analyze
+          const proc = document.createElement("textarea");
+          proc.rows = 2;
+          proc.placeholder = "Desarrollo/procedimiento (opcional, para analizar después)";
+          proc.dataset.procFor = `${prob.id}-${sp.id}`;
+          proc.style.marginTop = "4px";
+          sub.appendChild(proc);
+          d.appendChild(sub);
+        }
+        body.appendChild(d);
+      }
+    }
+  }
+}
+
+function appendMedia(parent: HTMLElement, obj: any) {
+  if (!obj) return;
+  if (obj.svg && typeof obj.svg === "string") {
+    const wrap = document.createElement("div");
+    wrap.style.margin = "8px 0";
+    wrap.innerHTML = obj.svg;
+    // sanitize: remove scripts
+    wrap.querySelectorAll("script").forEach((s) => s.remove());
+    parent.appendChild(wrap);
+  }
+  if (typeof obj.imageIndex === "number" && extractedImages[obj.imageIndex]) {
+    const img = document.createElement("img");
+    img.src = extractedImages[obj.imageIndex];
+    img.style.maxWidth = "100%";
+    img.style.borderRadius = "8px";
+    img.style.margin = "8px 0";
+    parent.appendChild(img);
+  }
+}
+
+function sectionTitle(t: string) {
+  return { multiple_choice: "Test", open_reasoning: "Redacción", short_problem: "Problemas cortos", long_problem: "Problemas largos" }[t] || t;
+}
+
+function escapeHtml(s: string) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function createAnswerInput(answer: any, value: string, onChange: (v: string) => void): HTMLElement {
+  const wrap = document.createElement("div");
+  if (answer.kind === "numeric") {
+    const inp = document.createElement("input");
+    inp.type = "text"; inp.placeholder = `Número${answer.units ? " (" + answer.units + ")" : ""}`;
+    inp.value = value;
+    inp.addEventListener("input", () => onChange(inp.value));
+    wrap.appendChild(inp);
+  } else if (answer.kind === "vector") {
+    const n = answer.value.length;
+    // store as comma separated in hidden? Use n inputs
+    const inputs: HTMLInputElement[] = [];
+    const row = document.createElement("div");
+    row.className = "row";
+    // parse existing
+    let existing: string[] = [];
+    try { existing = JSON.parse(value); } catch { existing = value.split(/[,;]+/).map(s=>s.trim()); }
+    for (let i = 0; i < n; i++) {
+      const inp = document.createElement("input");
+      inp.type = "text"; inp.style.width = "80px";
+      inp.value = existing[i] ?? "";
+      inp.addEventListener("input", () => {
+        const arr = inputs.map(x => x.value);
+        onChange(JSON.stringify(arr.map(x => x.trim())));
+      });
+      inputs.push(inp);
+      row.appendChild(inp);
+    }
+    wrap.appendChild(row);
+  } else if (answer.kind === "matrix") {
+    const rows = answer.value.length;
+    const cols = answer.value[0].length;
+    const inputs: HTMLInputElement[][] = [];
+    const grid = document.createElement("div");
+    grid.className = "grid-input";
+    let existing: any = null;
+    try { existing = JSON.parse(value); } catch {}
+    for (let i = 0; i < rows; i++) {
+      const r = document.createElement("div");
+      r.className = "matrix-row";
+      const rowInputs: HTMLInputElement[] = [];
+      for (let j = 0; j < cols; j++) {
+        const inp = document.createElement("input");
+        inp.type = "text";
+        const ev = existing?.[i]?.[j];
+        inp.value = ev !== undefined ? String(ev) : "";
+        inp.addEventListener("input", () => {
+          const m = inputs.map(rr => rr.map(x => x.value.trim()));
+          onChange(JSON.stringify(m));
+        });
+        rowInputs.push(inp);
+        r.appendChild(inp);
+      }
+      inputs.push(rowInputs);
+      grid.appendChild(r);
+    }
+    wrap.appendChild(grid);
+  } else if (answer.kind === "symbolic") {
+    const inp = document.createElement("input");
+    inp.type = "text"; inp.placeholder = `Expresión en ${answer.variables.join(", ")}`;
+    inp.value = value;
+    inp.addEventListener("input", () => onChange(inp.value));
+    wrap.appendChild(inp);
+  } else if (answer.kind === "text") {
+    const inp = document.createElement("input");
+    inp.type = "text";
+    inp.value = value;
+    inp.addEventListener("input", () => onChange(inp.value));
+    wrap.appendChild(inp);
+  }
+  return wrap;
+}
+
+// ---- Submit ----
+$("btn-submit").addEventListener("click", async () => {
+  if (!currentExam) return;
+  const mode = storageSel.value as any;
+  const model = modelSel.value.trim();
+  const apiKey = apikeyInput.value.trim();
+  const llm = apiKey ? { apiKey, model } : null;
+  $("submit-status").textContent = "Corrigiendo...";
+  try {
+    const res = await gradeExam(currentExam, currentAnswers, llm);
+    renderResults(res);
+    showView("view-results");
+    $("submit-status").textContent = "Corregido.";
+  } catch (e: any) {
+    $("submit-status").textContent = `Error: ${e?.message ?? e}`;
+  }
+});
+
+function renderResults(res: any) {
+  ($("score") as HTMLElement).textContent = `${res.totalScore} / ${res.totalPoints}`;
+  const body = $("results-body");
+  body.innerHTML = "";
+  for (const it of res.items) {
+    const d = document.createElement("div");
+    d.className = "q";
+    const cls = it.isCorrect ? "ok" : "bad";
+    d.innerHTML = `<p><strong>${escapeHtml(it.id)}</strong> — <span class="${cls}">${it.score}/${it.points}</span></p>
+      <p>${escapeHtml(it.feedback)}</p>
+      <details><summary>Resolución correcta</summary><pre>${escapeHtml(it.correctSolution)}</pre></details>
+      <div class="analyze-block" data-id="${escapeHtml(it.id)}">
+        <textarea rows="2" placeholder="Pega tu desarrollo/procedimiento (opcional)"></textarea>
+        <button class="secondary btn-analyze" type="button">Analizar mi desarrollo</button>
+        <div class="status analyze-out"></div>
+      </div>`;
+    body.appendChild(d);
+  }
+  // wire analyze buttons
+  body.querySelectorAll(".btn-analyze").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const block = (btn as HTMLElement).closest(".analyze-block") as HTMLElement;
+      const id = block.dataset.id!;
+      const proc = (block.querySelector("textarea") as HTMLTextAreaElement).value.trim();
+      if (!proc) { (block.querySelector(".analyze-out") as HTMLElement).textContent = "Escribe tu desarrollo."; return; }
+      const item = res.items.find((x: any) => x.id === id);
+      const mode = storageSel.value as any;
+      const model = modelSel.value.trim();
+      const apiKey = apikeyInput.value.trim();
+      if (!apiKey) { (block.querySelector(".analyze-out") as HTMLElement).textContent = "Falta API key."; return; }
+      (block.querySelector(".analyze-out") as HTMLElement).textContent = "Analizando...";
+      try {
+        const r = await analyzeDevelopment(item?.label ?? id, item?.correctSolution ?? "", proc, { apiKey, model });
+        (block.querySelector(".analyze-out") as HTMLElement).textContent = r.diagnosis + (r.suggestions.length ? "\nSugerencias: " + r.suggestions.join("; ") : "");
+      } catch (e: any) {
+        (block.querySelector(".analyze-out") as HTMLElement).textContent = `Error: ${e?.message ?? e}`;
+      }
+    });
+  });
+}
+
+$("btn-back-setup").addEventListener("click", () => showView("view-setup"));
+$("btn-new").addEventListener("click", () => {
+  clearExam();
+  currentExam = null;
+  currentAnswers = { mc: {}, open: {}, short: {}, long: {} };
+  showView("view-setup");
+});
+
+// restore exam if exists
+const savedExam = loadExam();
+if (savedExam) {
+  try {
+    const p = ExamSchema.safeParse(savedExam);
+    if (p.success) {
+      currentExam = normalizeExam(p.data);
+      const sa = loadAnswers();
+      if (sa) currentAnswers = sa;
+      try { extractedImages = JSON.parse(localStorage.getItem("exam_images") || "[]"); } catch { extractedImages = []; }
+      renderExam();
+      showView("view-exam");
+    }
+  } catch {}
+}
+</script>
+</Layout>

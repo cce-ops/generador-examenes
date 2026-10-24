@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Generador y corrector de exámenes (BYOK)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/mammoth@1.13.0/mammoth.browser.min.js" integrity="sha384-8NWE3bZDrmRI4IePMoQaEoLhAQ1MmRMJkdNgnGiHRFanTqsFKr0TmK6aSZvFJ/PO" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.js" integrity="sha384-nS3BSll1sd9HszmNsYkl4AckuUMs5BT9+jTal0AmkwkjxVDBaao4UkPCZDVM9tYv" crossorigin="anonymous"></script>
+<script is:inline>var _p = window["pdfjsLib"]; if (_p) { _p.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.js"; }</script>
+<style is:global>
+  :root {
+    --bg: #070b14;
+    --surface: #0f1626;
+    --surface-2: #16203a;
+    --border: #1f2a44;
+    --fg: #eaf0ff;
+    --muted: #8b97b8;
+    --accent: #4f8cff;
+    --accent-2: #ff8a3d;
+    --ok: #2dd4a0;
+    --bad: #ff6b6b;
+    --radius: 14px;
+    --maxw: 1240px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: "DM Sans", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    min-height: 100vh;
+    background-image:
+      radial-gradient(900px 500px at 80% -10%, rgba(79,140,255,0.10) 0%, transparent 60%),
+      radial-gradient(700px 400px at 10% 100%, rgba(255,138,61,0.06) 0%, transparent 60%),
+      linear-gradient(180deg, #070b14, #0a1020);
+  }
+  body.light {
+    --bg: #ffffff;
+    --surface: #f3f6fc;
+    --surface-2: #e7edf7;
+    --border: #cfd8ea;
+    --fg: #0b1220;
+    --muted: #4a5578;
+    --accent: #1d4ed8;
+    --accent-2: #1e3a8a;
+    --ok: #059669;
+    --bad: #dc2626;
+    background-image: none;
+    background: #ffffff;
+  }
+  .container {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 48px 64px 80px;
+  }
+  .hero {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: end;
+    gap: 24px;
+    padding-bottom: 28px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 32px;
+  }
+  .hero h1 {
+    margin: 0 0 8px;
+    font-family: "Sora", sans-serif;
+    font-size: 44px;
+    font-weight: 800;
+    letter-spacing: -1.2px;
+    line-height: 1.05;
+  }
+  .hero .accent { color: var(--accent); }
+  body.light .hero .accent { color: var(--accent-2); }
+  .hero .subtitle { color: var(--muted); font-size: 16px; max-width: 60ch; margin: 0; }
+  .hero .badge {
+    font-family: "Sora", sans-serif;
+    font-size: 12px; font-weight: 700;
+    padding: 8px 14px; border-radius: 999px;
+    border: 1px solid var(--accent); color: var(--accent);
+    letter-spacing: 0.5px;
+  }
+  h2 { margin: 36px 0 12px; font-family: "Sora", sans-serif; font-size: 22px; color: var(--fg); font-weight: 700; letter-spacing: -0.3px; }
+  h2::before { content: ""; display: inline-block; width: 6px; height: 22px; background: var(--accent); border-radius: 3px; margin-right: 10px; vertical-align: middle; }
+  h3 { margin: 18px 0 8px; font-family: "Sora", sans-serif; font-size: 16px; color: var(--accent-2); font-weight: 700; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 26px 28px;
+    margin: 18px 0;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.35);
+  }
+  label { display:block; margin: 12px 0 5px; font-size: 12px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; }
+  input, textarea, select {
+    width:100%; padding: 12px 14px; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--fg);
+    font-size: 14px; font-family: inherit;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,224,164,0.18); }
+  button {
+    padding: 11px 20px; border-radius: 10px; border: none;
+    background: var(--accent); color: #ffffff; font-weight: 700; cursor: pointer;
+    margin: 6px 6px 6px 0; font-family: "Sora", sans-serif; font-size: 14px;
+    transition: transform .12s, filter .12s;
+  }
+  button:hover { transform: translateY(-1px); filter: brightness(1.08); }
+  button.secondary { background: var(--surface-2); color: var(--fg); border: 1px solid var(--border); }
+  button.danger { background: var(--bad); color: #fff; }
+  .row { display:flex; gap:16px; flex-wrap:wrap; }
+  .col { flex:1; min-width: 260px; }
+  .status { padding: 11px 14px; border-radius: 10px; background: var(--surface-2); color: var(--muted); font-size: 13px; margin-top: 10px; border: 1px solid var(--border); }
+  .q { border-left: 3px solid var(--accent); padding: 18px 20px; margin: 16px 0; background: var(--surface-2); border-radius: 12px; }
+  .mc-option { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin: 6px 0; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); cursor: pointer; transition: border-color .12s, background .12s; }
+  .mc-option:hover { border-color: var(--accent); background: var(--surface-2); }
+  .mc-option input[type="radio"] { width: 18px; height: 18px; accent-color: var(--accent); flex-shrink: 0; }
+  .ok { color: var(--ok); font-weight: 700; }
+  .bad { color: var(--bad); font-weight: 700; }
+  .hidden { display:none; }
+  .score { font-size: 52px; font-weight: 800; font-family: "Sora", sans-serif; color: var(--accent); margin: 6px 0 14px; letter-spacing: -1px; }
+  pre { white-space: pre-wrap; background: var(--surface-2); padding: 14px; border-radius: 10px; font-size: 13px; border: 1px solid var(--border); }
+  .grid-input { display:grid; gap:6px; }
+  .matrix-row { display:flex; gap:6px; }
+  .matrix-row input { width: 80px; text-align: center; }
+  details summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+  .analyze-block { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border); }
+  .analyze-block textarea { margin-bottom: 6px; }
+  @media (max-width: 768px) {
+    .container { padding: 28px 24px 56px; }
+    .hero { grid-template-columns: 1fr; }
+    .hero h1 { font-size: 32px; }
+  }
+</style>
+</head>
+<body>
+<slot />
+</body>
+</html>
+EOF
