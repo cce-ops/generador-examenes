@@ -1,6 +1,8 @@
-# Generador y corrector de exámenes de ingeniería (BYOK)
+# Generador y corrector de exámenes de ingeniería 
 
 App estática (Astro + TypeScript) que genera exámenes a partir de apuntes y los corrige automáticamente. BYOK: la clave de LLM se guarda solo en el navegador.
+
+https://cce-ops.github.io/generador-examenes/
 
 ## Desarrollo
 
