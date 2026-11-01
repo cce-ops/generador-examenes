@@ -1,7 +1,7 @@
 export type ProviderId = "gemini";
 
 export const PROVIDERS = [
-  { id: "gemini", label: "Google Gemini", needsKey: true, defaultModel: "gemini-3.8-flash", models: ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"] },
+  { id: "gemini", label: "Google Gemini", needsKey: true, defaultModel: "gemini-flash-latest", models: ["gemini-flash-latest", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"] },
 ] as const;
 
 export function providerInfo(_id?: string) {
@@ -20,7 +20,7 @@ export type LLMCallOpts = {
   onAttempt?: (msg: string) => void;
 };
 
-const MODELS_ORDER = ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
+const MODELS_ORDER = ["gemini-flash-latest", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"];
 
 export function modelQueue(preferred: string): string[] {
   const idx = MODELS_ORDER.indexOf(preferred);
